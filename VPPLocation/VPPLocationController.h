@@ -74,7 +74,8 @@ addLocationDelegate: and addGeocoderDelegate:.
 	CLLocationManager *manager_;
 	CLLocation* currentLocation_;
 	NSMutableArray *locationDelegates_;
-	BOOL locationDelegatesLocked;	
+	NSMutableArray *significantLocationDelegates_;
+	BOOL locationDelegatesLocked;
 	NSDate *startDate_;
 	NSError *gpsError_;
 
@@ -175,6 +176,10 @@ addLocationDelegate: and addGeocoderDelegate:.
 /** Removes, if exists, a location delegate. */
 - (void) removeLocationDelegate:(id<VPPLocationControllerLocationDelegate>)delegate;
 
+
+- (void)addSignificantLocationDelegate:(id <VPPLocationControllerLocationDelegate>)delegate;
+
+- (void)removeSignificantLocationDelegate:(id <VPPLocationControllerLocationDelegate>)delegate;
 
 /** Adds a new geocoder delegate. Each time a new placemark arrives, all delegates
  are notified. 

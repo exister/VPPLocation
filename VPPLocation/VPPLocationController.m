@@ -98,7 +98,8 @@
 - (void) notifyAllLocationListenersLocationAccessDenied {
 	locationDelegatesLocked = YES;	
 	[locationDelegates_ makeObjectsPerformSelector:@selector(locationDenied) withObject:nil];
-	locationDelegatesLocked = NO;	
+	[significantLocationDelegates_ makeObjectsPerformSelector:@selector(locationDenied) withObject:nil];
+	locationDelegatesLocked = NO;
 }
 
 - (void) notifyLocationListenerLocationAccessDenied:(id<VPPLocationControllerLocationDelegate>)listener {
@@ -108,13 +109,15 @@
 - (void) notifyAllLocationListenersNewLocation:(CLLocation*)location {
 	locationDelegatesLocked = YES;
 	[locationDelegates_ makeObjectsPerformSelector:@selector(locationUpdate:) withObject:location];
+	[significantLocationDelegates_ makeObjectsPerformSelector:@selector(locationUpdate:) withObject:location];
 	locationDelegatesLocked = NO;
 }
 
 - (void) notifyAllLocationListenersError:(NSError*)error {
 	locationDelegatesLocked = YES;	
 	[locationDelegates_ makeObjectsPerformSelector:@selector(locationError:) withObject:error];
-    
+	[significantLocationDelegates_ makeObjectsPerformSelector:@selector(locationError:) withObject:error];
+
     if (error.code == kCLErrorDenied) {
         [self notifyAllLocationListenersLocationAccessDenied];
     }
@@ -125,14 +128,13 @@
 - (void) notifyLocationListener:(id<VPPLocationControllerLocationDelegate>)listener newLocation:(CLLocation*)location {
 	[listener locationUpdate:location];
 }
+
 - (void) notifyLocationListener:(id<VPPLocationControllerLocationDelegate>)listener error:(NSError*)error {
 	[listener locationError:error];
     if (error.code == kCLErrorDenied) {
         [self notifyLocationListenerLocationAccessDenied:listener];
     }
 }
-
-
 
 - (void) notifyAllGeocoderListenersNewPlacemark:(MKPlacemark*)placemark {
 	geocoderDelegatesLocked = YES;
@@ -285,6 +287,10 @@ SYNTHESIZE_SINGLETON_FOR_CLASS(VPPLocationController);
         [locationDelegates_ release];
         locationDelegates_ = nil;
     }
+    if (significantLocationDelegates_ != nil) {
+        [significantLocationDelegates_ release];
+        significantLocationDelegates_ = nil;
+    }
     if (startDate_ != nil) {
         [startDate_ release];
         startDate_ = nil;
@@ -348,11 +354,17 @@ SYNTHESIZE_SINGLETON_FOR_CLASS(VPPLocationController);
 
 #pragma mark -
 #pragma mark Managing Location Controller
-- (void) startListening {
+
+- (void)startListening {
+    [self startListening:NO];
+}
+
+- (void) startListening:(BOOL)useSignificantLocation {
 	if (manager_ == nil) {
 		// initializes
 		currentLocation_ = nil;
-		locationDelegates_ = nil;		
+		locationDelegates_ = nil;
+        significantLocationDelegates_ = nil;
 		gpsError_ = nil;
 		locationDelegatesLocked = NO;
 		startDate_ = [[NSDate alloc] init];
@@ -362,30 +374,62 @@ SYNTHESIZE_SINGLETON_FOR_CLASS(VPPLocationController);
 		manager_.desiredAccuracy = self.desiredLocationAccuracy;
         manager_.distanceFilter = self.distanceFilter;
         manager_.headingFilter = self.headingFilter;
-		[manager_ startUpdatingLocation];
+
+        if (useSignificantLocation) {
+            [manager_ startMonitoringSignificantLocationChanges];
+        }
+        else {
+            [manager_ startUpdatingLocation];
+        }
 	}
 }
 
 - (void) stopListening {
+    [self stopListening:NO];
+}
+
+- (void) stopListening:(BOOL)useSignificantLocation {
+    BOOL noDelegates = ([locationDelegates_ count] == 0 && [significantLocationDelegates_ count] == 0);
+
 	if (manager_ != nil) {
-		[manager_ stopUpdatingLocation];	
-		[manager_ release];
-		manager_ = nil;
+        if (useSignificantLocation) {
+            [manager_ stopMonitoringSignificantLocationChanges];
+        }
+        else {
+            [manager_ stopUpdatingLocation];
+        }
+
+        if (noDelegates) {
+            [manager_ release];
+            manager_ = nil;
+        }
 	}
 	
 	// resets
-	if (locationDelegates_ != nil) {
-		[locationDelegates_ release];
-		locationDelegates_ = nil;
-	}
-	if (gpsError_ != nil) {
-		[gpsError_ release];
-		gpsError_ = nil;
-	}
-	if (startDate_ != nil) {
-		[startDate_ release];
-		startDate_ = nil;
-	}
+    if (useSignificantLocation) {
+        if (significantLocationDelegates_ != nil) {
+            [significantLocationDelegates_ release];
+            significantLocationDelegates_ = nil;
+        }
+    }
+    else {
+        if (locationDelegates_ != nil) {
+            [locationDelegates_ release];
+            locationDelegates_ = nil;
+        }
+    }
+
+    if (noDelegates) {
+        if (gpsError_ != nil) {
+            [gpsError_ release];
+            gpsError_ = nil;
+        }
+        if (startDate_ != nil) {
+            [startDate_ release];
+            startDate_ = nil;
+        }
+    }
+
 	locationDelegatesLocked = NO;		
 }
 
@@ -440,6 +484,39 @@ SYNTHESIZE_SINGLETON_FOR_CLASS(VPPLocationController);
 	}
 }
 
+- (void) addSignificantLocationDelegate:(id<VPPLocationControllerLocationDelegate>)delegate {
+	if (significantLocationDelegates_ == nil) {
+		[self startListening:YES];
+        significantLocationDelegates_ = [[NSMutableArray alloc] init];
+	}
+	if (![significantLocationDelegates_ containsObject:delegate]) {
+		[significantLocationDelegates_ addObject:delegate];
+	}
+
+	if ([self isValidLocation:self.currentLocation]) {
+		[self notifyLocationListener:delegate newLocation:self.currentLocation];
+	}
+	else if (gpsError_ != nil) {
+		[self notifyLocationListener:delegate error:gpsError_];
+	}
+
+}
+
+- (void) removeSignificantLocationDelegate:(id<VPPLocationControllerLocationDelegate>)delegate {
+	if (locationDelegatesLocked) {
+		// delays the operation half a second, and luckyly the delegates
+		// are no longer locked.
+		[self performSelector:@selector(removeSignificantLocationDelegate:) withObject:delegate afterDelay:0.5];
+		return;
+	}
+	if (significantLocationDelegates_ == nil) {
+		return;
+	}
+	[significantLocationDelegates_ removeObject:delegate];
+	if ([significantLocationDelegates_ count] == 0) {
+		[self stopListening];
+	}
+}
 
 - (void) addGeocoderDelegate:(id<VPPLocationControllerGeocoderDelegate>)delegate {
     BOOL mustStart = geocoderDelegates_ == nil;
