@@ -514,7 +514,7 @@ SYNTHESIZE_SINGLETON_FOR_CLASS(VPPLocationController);
 	}
 	[significantLocationDelegates_ removeObject:delegate];
 	if ([significantLocationDelegates_ count] == 0) {
-		[self stopListening];
+		[self stopListening:YES];
 	}
 }
 
